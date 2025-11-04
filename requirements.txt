@@ -1,0 +1,9 @@
+protobuf
+sentencepiece
+torch
+transformers
+accelerate
+fastapi
+uvicorn[standard]
+safetensors
+hf_transfer
