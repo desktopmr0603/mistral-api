@@ -1,27 +1,46 @@
-import os
-from fastapi import FastAPI, Request
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from fastapi import FastAPI
+from pydantic import BaseModel
+from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
+import os
 
-app = FastAPI()
+# -----------------------------
+# Load environment variables
+# -----------------------------
+HF_TOKEN = os.environ.get("HF_TOKEN")
+MODEL_NAME = os.environ.get("MODEL_NAME")
 
-MODEL_ID = os.environ.get("MODEL_ID", "TesterColab/mistral-finetunedv2")
-HF_TOKEN = os.environ.get("HF_TOKEN", None)
+if not HF_TOKEN or not MODEL_NAME:
+    raise ValueError("HF_TOKEN or MODEL_NAME environment variable not set!")
 
-# Load tokenizer and model once when container starts
-print(f"Loading model {MODEL_ID} ...")
-tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, use_fast=True, token=HF_TOKEN)
-model = AutoModelForCausalLM.from_pretrained(MODEL_ID, torch_dtype=torch.float16, resume_download=True, trust_remote_code=True, use_safetensors=True, device_map="auto", token=HF_TOKEN)
-# if device_map="auto" errors, remove it and call .to("cuda") after loading
+# -----------------------------
+# Load tokenizer and model
+# -----------------------------
+print(f"Loading model {MODEL_NAME} from Hugging Face...")
 
-@app.post("/predict")
-async def predict(req: Request):
-    data = await req.json()
-    prompt = data.get("input", "")
-    if not prompt:
-        return {"error": "no input provided"}
-    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, use_auth_token=HF_TOKEN)
+model = AutoModelForCausalLM.from_pretrained(MODEL_NAME, use_auth_token=HF_TOKEN)
+model.eval()  # set model to evaluation mode
+
+print("Model loaded successfully!")
+
+# -----------------------------
+# Setup FastAPI
+# -----------------------------
+app = FastAPI(title="Mistral 7B API")
+
+class RequestBody(BaseModel):
+    prompt: str
+    max_length: int = 150
+
+@app.post("/generate")
+def generate_text(body: RequestBody):
+    inputs = tokenizer(body.prompt, return_tensors="pt")
     with torch.no_grad():
-        out = model.generate(**inputs, max_new_tokens=64)
-    text = tokenizer.decode(out[0], skip_special_tokens=True)
-    return {"output": text}
+        outputs = model.generate(**inputs, max_new_tokens=body.max_length)
+    text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    return {"generated_text": text}
+
+@app.get("/")
+def root():
+    return {"message": "Mistral 7B API is running!"}
